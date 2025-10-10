@@ -4,6 +4,7 @@ import { google } from '@ai-sdk/google';
 import fastifyCors from "@fastify/cors";
 import { experimental_createMCPClient as createMCPClient } from 'ai';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { Experimental_Agent as Agent, stepCountIs, tool } from 'ai';
 
 const app = fastify();
 app.register(fastifyCors, { origin: "*", methods: ["GET", "POST"] });
@@ -26,11 +27,13 @@ app.post("/stream", async (request, reply) => {
         console.log('Tools retrieved:', Object.keys(tools));
 
         console.log('Starting generateText with automatic tool handling...');
-        const result = await generateText({
+        const myAgent = await new Agent({
             model: google('gemini-2.5-flash'),
             tools,
+            stopWhen: stepCountIs(20),
+        });
+        const result = await myAgent.generate({
             prompt: prompt || 'Say hello world!',
-            maxToolRoundtrips: 5,
         });
 
         console.log('Generation complete, closing MCP client...');
@@ -40,7 +43,6 @@ app.post("/stream", async (request, reply) => {
 
     } catch (error) {
         console.error("Error in /stream route:", error);
-        await mcpClient?.close();
         return reply.status(500).send({ 
             error: "Internal Server Error", 
             message: error instanceof Error ? error.message : String(error) 

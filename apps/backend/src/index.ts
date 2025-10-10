@@ -4,7 +4,8 @@ import { google } from '@ai-sdk/google';
 import fastifySSEPlugin from 'fastify-sse-v2';
 import fastifyCors from "@fastify/cors";
 import { experimental_createMCPClient as createMCPClient } from 'ai';
-import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import { Experimental_Agent as Agent, stepCountIs, tool } from 'ai';
 
 const app = fastify();
 app.register(fastifySSEPlugin);
@@ -21,23 +22,18 @@ app.register(fastifyCors, corsOptions);
 // }
 
 async function createResponseStream(prompt: string): Promise<{ streamResult: any; mcpClient: any; }> {
-    console.log('Creating MCP client with stdio transport...');
     const mcpClient = await createMCPClient({
-        transport: new StdioClientTransport({
-            command: 'bun',
-            args: ['run', 'C:\\Users\\manis\\chat\\apps\\mcp\\index.ts']
-        })
+        transport: new StreamableHTTPClientTransport(new URL('http://localhost:3001/mcp'))
     });
-    console.log('MCP client created, getting tools...');
     const tools = await mcpClient.tools();
-    console.log('Tools retrieved:', Object.keys(tools));
-    console.log('Starting streamText...');
-    const streamResult = await streamText({
+    const myAgent = await new Agent({
       model: google('gemini-2.5-flash'),
       tools,
+      stopWhen: stepCountIs(20),
+    });
+    const streamResult = await myAgent.stream({
       prompt: prompt || 'Say hello world!',
     });
-    console.log('StreamText started; fullStream ready');
     return { streamResult, mcpClient };
 }
 
@@ -55,62 +51,11 @@ app.post("/stream", async (request, reply) => {
             "Connection": "keep-alive",
         });
         
-        console.log("Starting to consume fullStream events...");
-        let chunkCount = 0;
-        let toolTextFallback = '';
-        try {
-            const fullStream = (streamResult?.fullStream ?? streamResult?.stream ?? []) as AsyncIterable<any>;
-            for await (const event of fullStream) {
-                const type = (event as any)?.type ?? 'unknown';
-                switch (type) {
-                    case 'text-delta': {
-                        const delta = (event as any)?.delta ?? (event as any)?.textDelta ?? '';
-                        if (delta) {
-                            chunkCount++;
-                            reply.sse({ data: String(delta) });
-                        }
-                        break;
-                    }
-                    case 'tool-result': {
-                        const result = (event as any)?.result ?? (event as any)?.toolResult;
-                        if (result) {
-                            const parts = Array.isArray(result.content) ? result.content : [];
-                            const textParts = parts
-                                .map((part: any) => (typeof part?.text === 'string' ? part.text : ''))
-                                .filter(Boolean);
-                            if (typeof result.text === 'string') {
-                                textParts.push(result.text);
-                            }
-                            if (textParts.length) {
-                                const combined = textParts.join('');
-                                toolTextFallback += combined;
-                                console.log('Buffered tool-result text:', combined);
-                            }
-                        }
-                        break;
-                    }
-                    case 'error':
-                    case 'response-error': {
-                        const message = (event as any)?.error?.message ?? 'Unknown stream error';
-                        throw new Error(message);
-                    }
-                    default:
-                        console.log('Non-text stream event:', type, event);
-                }
-            }
-        } finally {
-            if (mcpClient && typeof (mcpClient as any).close === 'function') {
-                await (mcpClient as any).close();
-            }
+        console.log("Starting to consume agent stream...");
+        for await (const chunk of streamResult.textStream) {
+            reply.sse({ data: chunk });
         }
-
-        if (chunkCount === 0 && toolTextFallback) {
-            console.log('No assistant text emitted; streaming buffered tool text');
-            reply.sse({ data: toolTextFallback });
-            chunkCount = 1;
-        }
-
-        console.log(`Finished streaming ${chunkCount} text chunks`);
+        console.log("Stream finished");
         reply.sse({ data: '[DONE]' });
         return reply;
     } catch (error) {
