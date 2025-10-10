@@ -1,0 +1,22 @@
+{
+  "name": "backend",
+  "module": "index.ts",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev": "bun run src/index.ts"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  },
+  "dependencies": {
+    "@ai-sdk/google": "^2.0.19",
+    "@fastify/cors": "^11.1.0",
+    "ai": "^5.0.65",
+    "fastify": "^5.6.1",
+    "fastify-sse-v2": "^4.2.1"
+  }
+}
