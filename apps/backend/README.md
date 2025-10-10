@@ -1,4 +1,4 @@
-To install dependencies:
+# To install dependencies
 
 ```bash
 bun install
