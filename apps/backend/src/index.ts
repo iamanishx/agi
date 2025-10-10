@@ -20,7 +20,7 @@ app.register(fastifyCors, corsOptions);
 // function createMCPClientInstance(uri:string) {
 // }
 
-async function createResponseStream(prompt: string) {
+async function createResponseStream(prompt: string): Promise<{ streamResult: any; mcpClient: any; }> {
     console.log('Creating MCP client with stdio transport...');
     const mcpClient = await createMCPClient({
         transport: new StdioClientTransport({
@@ -32,16 +32,13 @@ async function createResponseStream(prompt: string) {
     const tools = await mcpClient.tools();
     console.log('Tools retrieved:', Object.keys(tools));
     console.log('Starting streamText...');
-    const { textStream } = await streamText({
+    const streamResult = await streamText({
       model: google('gemini-2.5-flash'),
-      tools: tools,
+      tools,
       prompt: prompt || 'Say hello world!',
-    onFinish: async () => {
-    await mcpClient.close();
-  },
     });
-    console.log('StreamText started', textStream);
-    return textStream;
+    console.log('StreamText started; fullStream ready');
+    return { streamResult, mcpClient };
 }
 
 app.post("/stream", async (request, reply) => {
@@ -49,8 +46,8 @@ app.post("/stream", async (request, reply) => {
         const {prompt} = request.body as {prompt: string};
         const accept = request.headers["accept"];
         console.log("Creating response stream for prompt:", prompt);
-        const textStream = await createResponseStream(prompt);
-        console.log("Text stream created");
+        const { streamResult, mcpClient } = await createResponseStream(prompt);
+        console.log("Stream result received; configuring SSE response");
         
         reply.headers({
             "Content-Type": "text/event-stream",
@@ -58,14 +55,62 @@ app.post("/stream", async (request, reply) => {
             "Connection": "keep-alive",
         });
         
-        console.log("Starting to read from textStream...");
+        console.log("Starting to consume fullStream events...");
         let chunkCount = 0;
-        for await (const chunk of textStream){
-            chunkCount++;
-            console.log(`Chunk ${chunkCount}:`, chunk);
-            reply.sse({ data: chunk });
+        let toolTextFallback = '';
+        try {
+            const fullStream = (streamResult?.fullStream ?? streamResult?.stream ?? []) as AsyncIterable<any>;
+            for await (const event of fullStream) {
+                const type = (event as any)?.type ?? 'unknown';
+                switch (type) {
+                    case 'text-delta': {
+                        const delta = (event as any)?.delta ?? (event as any)?.textDelta ?? '';
+                        if (delta) {
+                            chunkCount++;
+                            reply.sse({ data: String(delta) });
+                        }
+                        break;
+                    }
+                    case 'tool-result': {
+                        const result = (event as any)?.result ?? (event as any)?.toolResult;
+                        if (result) {
+                            const parts = Array.isArray(result.content) ? result.content : [];
+                            const textParts = parts
+                                .map((part: any) => (typeof part?.text === 'string' ? part.text : ''))
+                                .filter(Boolean);
+                            if (typeof result.text === 'string') {
+                                textParts.push(result.text);
+                            }
+                            if (textParts.length) {
+                                const combined = textParts.join('');
+                                toolTextFallback += combined;
+                                console.log('Buffered tool-result text:', combined);
+                            }
+                        }
+                        break;
+                    }
+                    case 'error':
+                    case 'response-error': {
+                        const message = (event as any)?.error?.message ?? 'Unknown stream error';
+                        throw new Error(message);
+                    }
+                    default:
+                        console.log('Non-text stream event:', type, event);
+                }
+            }
+        } finally {
+            if (mcpClient && typeof (mcpClient as any).close === 'function') {
+                await (mcpClient as any).close();
+            }
         }
-        console.log(`Finished streaming ${chunkCount} chunks`);
+
+        if (chunkCount === 0 && toolTextFallback) {
+            console.log('No assistant text emitted; streaming buffered tool text');
+            reply.sse({ data: toolTextFallback });
+            chunkCount = 1;
+        }
+
+        console.log(`Finished streaming ${chunkCount} text chunks`);
         reply.sse({ data: '[DONE]' });
         return reply;
     } catch (error) {
