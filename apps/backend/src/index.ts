@@ -6,6 +6,7 @@ import fastifyCors from "@fastify/cors";
 import { experimental_createMCPClient as createMCPClient } from 'ai';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { Experimental_Agent as Agent, stepCountIs, tool } from 'ai';
+import { initDatabase } from './drizzle/client';
 
 const app = fastify();
 app.register(fastifySSEPlugin);
@@ -67,6 +68,7 @@ app.post("/stream", async (request, reply) => {
     }
 });
 
-app.listen({ port: 5000 }).then(() => {
-  console.log("Server is running on http://localhost:5000");
+app.listen({ port: 5000 }).then(async () => {
+    await initDatabase().catch((e) => console.error('DB init error:', e));
+    console.log("Server is running on http://localhost:5000");
 });

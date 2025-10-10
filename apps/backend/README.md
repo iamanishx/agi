@@ -1,5 +1,3 @@
-# backend
-
 To install dependencies:
 
 ```bash
