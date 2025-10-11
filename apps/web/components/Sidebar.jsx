@@ -39,7 +39,7 @@ export default function Sidebar({
   if (sidebarCollapsed) {
     return (
       <motion.aside
-        initial={{ width: 64 }}
+        initial={{ width: 320 }}
         animate={{ width: 64 }}
         transition={{ type: "spring", stiffness: 260, damping: 28 }}
         className="z-50 flex h-full shrink-0 flex-col border-r border-zinc-200/60 bg-white dark:border-zinc-800 dark:bg-zinc-900"
@@ -103,7 +103,7 @@ export default function Sidebar({
       </AnimatePresence>
 
       <AnimatePresence>
-        {open && (
+        {(open || typeof window !== "undefined") && (
           <motion.aside
             key="sidebar"
             initial={{ x: -340 }}
