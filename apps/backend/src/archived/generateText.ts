@@ -1,3 +1,4 @@
+//this is archive of old code for reference
 import fastify from "fastify";
 import { generateText } from 'ai';
 import { google } from '@ai-sdk/google';
